@@ -1,251 +1,217 @@
--- Krein Aimbot v4 - Clean Rebuild
--- Fitur: Aimbot Toggle, Target Part Switch, ESP Skeleton, FOV Circle
+--====================================================
+-- Krein Auto Lock v4.6 FINAL
+-- Auto Lock Head + Team Check + Wall Check + ESP Highlight
+--====================================================
 
--- Services
+--================ SERVICES ==========================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
--- Config
+--================ CONFIG ============================
 local Config = {
-    Aimbot = false,
-    ESP = false,
-    TargetPart = "Head",
-    FOV = 150,
-    ShowFOV = true,
-    Smoothing = 0.2,
+	Aimbot = false,
+	ESP = false,
+	FOV = 200,
+	ShowFOV = true,
+	TeamCheck = true,
+	WallCheck = true
 }
 
--- ====== UTILITY FUNCTIONS ======
-local function IsAlive(player)
-    return player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0
+--================ UTIL ==============================
+local function IsAlive(plr)
+	local hum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+	return hum and hum.Health > 0
 end
 
-local function GetTargetPart(char)
-    if Config.TargetPart == "Head" then
-        return char:FindFirstChild("Head")
-    elseif Config.TargetPart == "Body" then
-        return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-    elseif Config.TargetPart == "Leg" then
-        return char:FindFirstChild("RightFoot") or char:FindFirstChild("LeftFoot")
-    end
-    return nil
+local function IsEnemy(plr)
+	if not Config.TeamCheck then return true end
+	if not LocalPlayer.Team or not plr.Team then return true end
+	return LocalPlayer.Team ~= plr.Team
 end
 
-local function GetClosestPlayer()
-    local Closest = nil
-    local Shortest = math.huge
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and IsAlive(player) then
-            local part = GetTargetPart(player.Character)
-            if part then
-                local screenPos, visible = Camera:WorldToViewportPoint(part.Position)
-                if visible then
-                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)).Magnitude
-                    if dist < Config.FOV and dist < Shortest then
-                        Shortest = dist
-                        Closest = part
-                    end
-                end
-            end
-        end
-    end
-
-    return Closest
+local function GetHead(plr)
+	return plr.Character and plr.Character:FindFirstChild("Head")
 end
 
--- ====== AIMBOT ======
-RunService.RenderStepped:Connect(function(dt)
-    if Config.Aimbot then
-        local target = GetClosestPlayer()
-        if target then
-            local direction = (target.Position - Camera.CFrame.Position).Unit
-            local targetCFrame = CFrame.new(Camera.CFrame.Position, Camera.CFrame.Position + direction)
-            Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, Config.Smoothing)
-        end
-    end
-end)
-
--- ====== ESP SKELETON ======
-local Skeletons = {}
-local Bones = {
-    {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"},
-    {"UpperTorso", "LeftUpperArm"}, {"UpperTorso", "RightUpperArm"},
-    {"LowerTorso", "LeftUpperLeg"}, {"LowerTorso", "RightUpperLeg"},
-    {"LeftUpperArm", "LeftLowerArm"}, {"RightUpperArm", "RightLowerArm"},
-    {"LeftUpperLeg", "LeftLowerLeg"}, {"RightUpperLeg", "RightLowerLeg"}
-}
-
-local function CreateSkeleton(player)
-    if Skeletons[player] then return end
-    Skeletons[player] = {}
-    for _, bone in ipairs(Bones) do
-        local line = Drawing.new("Line")
-        line.Visible = false
-        line.Color = Color3.fromRGB(255, 60, 60)
-        line.Thickness = 1.5
-        table.insert(Skeletons[player], {bone = bone, line = line})
-    end
+local function InFOV(pos)
+	local s, v = Camera:WorldToViewportPoint(pos)
+	if not v then return false end
+	local center = Camera.ViewportSize / 2
+	return (Vector2.new(s.X, s.Y) - center).Magnitude <= Config.FOV
 end
 
-local function ClearSkeleton(player)
-    if Skeletons[player] then
-        for _, obj in ipairs(Skeletons[player]) do
-            obj.line:Remove()
-        end
-        Skeletons[player] = nil
-    end
+--================ WALL CHECK ========================
+local RayParams = RaycastParams.new()
+RayParams.FilterType = Enum.RaycastFilterType.Blacklist
+RayParams.IgnoreWater = true
+
+local function HasLineOfSight(targetHead)
+	if not Config.WallCheck then return true end
+
+	local origin = Camera.CFrame.Position
+	local direction = (targetHead.Position - origin)
+
+	RayParams.FilterDescendantsInstances = {
+		LocalPlayer.Character,
+		targetHead.Parent
+	}
+
+	local result = workspace:Raycast(origin, direction, RayParams)
+
+	-- Jika ray kena sesuatu SEBELUM head
+	return (not result)
 end
 
-Players.PlayerRemoving:Connect(ClearSkeleton)
+--================ AUTO LOCK =========================
+local LockedHead = nil
+
+local function AcquireTarget()
+	local best, dist = nil, Config.FOV
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer
+			and IsAlive(plr)
+			and IsEnemy(plr) then
+
+			local head = GetHead(plr)
+			if head and InFOV(head.Position) and HasLineOfSight(head) then
+				local s = Camera:WorldToViewportPoint(head.Position)
+				local d = (Vector2.new(s.X, s.Y) - Camera.ViewportSize/2).Magnitude
+				if d < dist then
+					dist = d
+					best = head
+				end
+			end
+		end
+	end
+
+	return best
+end
 
 RunService.RenderStepped:Connect(function()
-    if not Config.ESP then
-        for _, lines in pairs(Skeletons) do
-            for _, obj in ipairs(lines) do
-                obj.line.Visible = false
-            end
-        end
-        return
-    end
+	if not Config.Aimbot then
+		LockedHead = nil
+		return
+	end
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and IsAlive(player) then
-            if not Skeletons[player] then CreateSkeleton(player) end
-            local char = player.Character
-            for _, obj in ipairs(Skeletons[player]) do
-                local a = char:FindFirstChild(obj.bone[1])
-                local b = char:FindFirstChild(obj.bone[2])
-                if a and b then
-                    local aPos, aVis = Camera:WorldToViewportPoint(a.Position)
-                    local bPos, bVis = Camera:WorldToViewportPoint(b.Position)
-                    if aVis and bVis then
-                        obj.line.From = Vector2.new(aPos.X, aPos.Y)
-                        obj.line.To = Vector2.new(bPos.X, bPos.Y)
-                        obj.line.Visible = true
-                    else
-                        obj.line.Visible = false
-                    end
-                else
-                    obj.line.Visible = false
-                end
-            end
-        end
-    end
+	if not LockedHead
+		or not LockedHead.Parent
+		or not InFOV(LockedHead.Position)
+		or not HasLineOfSight(LockedHead) then
+		LockedHead = AcquireTarget()
+	end
+
+	if LockedHead then
+		local camPos = Camera.CFrame.Position
+		Camera.CFrame = CFrame.new(camPos, LockedHead.Position)
+	end
 end)
 
--- ====== FOV CIRCLE ======
+--================ ESP HIGHLIGHT =====================
+local ESPObjects = {}
+
+local function ApplyESP(plr)
+	if plr == LocalPlayer then return end
+	if not IsEnemy(plr) then return end
+	if ESPObjects[plr] then return end
+
+	local function onChar(char)
+		if not Config.ESP then return end
+		if not IsEnemy(plr) then return end
+
+		local hl = Instance.new("Highlight")
+		hl.Name = "KreinESP"
+		hl.FillColor = Color3.fromRGB(255, 80, 80)
+		hl.OutlineColor = Color3.fromRGB(255,255,255)
+		hl.FillTransparency = 0.45
+		hl.Adornee = char
+		hl.Parent = char
+		ESPObjects[plr] = hl
+	end
+
+	if plr.Character then
+		onChar(plr.Character)
+	end
+	plr.CharacterAdded:Connect(onChar)
+end
+
+local function RemoveESP(plr)
+	if ESPObjects[plr] then
+		ESPObjects[plr]:Destroy()
+		ESPObjects[plr] = nil
+	end
+end
+
+Players.PlayerAdded:Connect(function(plr)
+	ApplyESP(plr)
+end)
+
+Players.PlayerRemoving:Connect(RemoveESP)
+
+local function RefreshESP()
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if Config.ESP then
+			ApplyESP(plr)
+		else
+			RemoveESP(plr)
+		end
+	end
+end
+
+--================ FOV CIRCLE ========================
 local FOVCircle = Drawing.new("Circle")
-FOVCircle.Visible = true
-FOVCircle.Color = Color3.fromRGB(255, 255, 255)
 FOVCircle.Thickness = 2
 FOVCircle.Filled = false
+FOVCircle.Color = Color3.fromRGB(255,255,255)
+
 RunService.RenderStepped:Connect(function()
-    FOVCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-    FOVCircle.Radius = Config.FOV
-    FOVCircle.Visible = Config.ShowFOV
+	FOVCircle.Visible = Config.ShowFOV
+	FOVCircle.Radius = Config.FOV
+	FOVCircle.Position = Camera.ViewportSize / 2
 end)
 
--- ====== GUI ======
-local ScreenGui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
-ScreenGui.Name = "KreinAimbotUI"
+--================ GUI ===============================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "KreinAutoLockUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local Main = Instance.new("Frame", ScreenGui)
-Main.Size = UDim2.new(0, 250, 0, 210)
-Main.Position = UDim2.new(0.05, 0, 0.3, 0)
-Main.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-Main.BorderSizePixel = 0
+Main.Size = UDim2.new(0,260,0,230)
+Main.Position = UDim2.new(0.05,0,0.3,0)
+Main.BackgroundColor3 = Color3.fromRGB(25,25,25)
 Main.Active = true
 Main.Draggable = true
 
 local Title = Instance.new("TextLabel", Main)
-Title.Size = UDim2.new(1, 0, 0, 30)
+Title.Size = UDim2.new(1,0,0,30)
+Title.Text = "Krein Auto Lock v4.6"
+Title.TextColor3 = Color3.new(1,1,1)
 Title.BackgroundTransparency = 1
-Title.Text = "Krein Aimbot v4"
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.Font = Enum.Font.SourceSansBold
 Title.TextSize = 18
 
--- BUTTON FUNCTION
-local function CreateToggle(y, text, default, callback)
-    local Label = Instance.new("TextLabel", Main)
-    Label.Size = UDim2.new(0, 140, 0, 25)
-    Label.Position = UDim2.new(0, 10, 0, y)
-    Label.BackgroundTransparency = 1
-    Label.Text = text
-    Label.TextColor3 = Color3.fromRGB(255, 255, 255)
-    Label.TextXAlignment = Enum.TextXAlignment.Left
+local function Toggle(y, text, callback)
+	local state = false
+	local btn = Instance.new("TextButton", Main)
+	btn.Size = UDim2.new(0,220,0,30)
+	btn.Position = UDim2.new(0,20,0,y)
+	btn.Text = text .. ": OFF"
+	btn.BackgroundColor3 = Color3.fromRGB(160,60,60)
+	btn.TextColor3 = Color3.new(1,1,1)
 
-    local Btn = Instance.new("TextButton", Main)
-    Btn.Size = UDim2.new(0, 80, 0, 25)
-    Btn.Position = UDim2.new(0, 160, 0, y)
-    Btn.Text = default and "ON" or "OFF"
-    Btn.BackgroundColor3 = default and Color3.fromRGB(60, 160, 60) or Color3.fromRGB(160, 60, 60)
-    Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-
-    Btn.MouseButton1Click:Connect(function()
-        default = not default
-        Btn.Text = default and "ON" or "OFF"
-        Btn.BackgroundColor3 = default and Color3.fromRGB(60, 160, 60) or Color3.fromRGB(160, 60, 60)
-        callback(default)
-    end)
+	btn.MouseButton1Click:Connect(function()
+		state = not state
+		btn.Text = text .. ": " .. (state and "ON" or "OFF")
+		btn.BackgroundColor3 = state and Color3.fromRGB(60,160,60) or Color3.fromRGB(160,60,60)
+		callback(state)
+	end)
 end
 
--- TOGGLES
-CreateToggle(40, "Aimbot", false, function(v) Config.Aimbot = v end)
-CreateToggle(70, "ESP Skeleton", false, function(v) Config.ESP = v end)
-CreateToggle(100, "Show FOV", true, function(v) Config.ShowFOV = v end)
-
--- TARGET PART SWITCH
-local TargetLabel = Instance.new("TextLabel", Main)
-TargetLabel.Size = UDim2.new(0, 140, 0, 25)
-TargetLabel.Position = UDim2.new(0, 10, 0, 130)
-TargetLabel.BackgroundTransparency = 1
-TargetLabel.Text = "Target: " .. Config.TargetPart
-TargetLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-TargetLabel.TextXAlignment = Enum.TextXAlignment.Left
-
-local ChangeBtn = Instance.new("TextButton", Main)
-ChangeBtn.Size = UDim2.new(0, 80, 0, 25)
-ChangeBtn.Position = UDim2.new(0, 160, 0, 130)
-ChangeBtn.Text = "Change"
-ChangeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 150)
-ChangeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-
-ChangeBtn.MouseButton1Click:Connect(function()
-    local order = {"Head", "Body", "Leg"}
-    local index = table.find(order, Config.TargetPart) or 1
-    index = (index % #order) + 1
-    Config.TargetPart = order[index]
-    TargetLabel.Text = "Target: " .. Config.TargetPart
-end)
-
--- FOV ADJUST
-local FOVLabel = Instance.new("TextLabel", Main)
-FOVLabel.Size = UDim2.new(0, 140, 0, 25)
-FOVLabel.Position = UDim2.new(0, 10, 0, 160)
-FOVLabel.BackgroundTransparency = 1
-FOVLabel.Text = "FOV: " .. Config.FOV
-FOVLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-FOVLabel.TextXAlignment = Enum.TextXAlignment.Left
-
-local MinusBtn = Instance.new("TextButton", Main)
-MinusBtn.Size = UDim2.new(0, 35, 0, 25)
-MinusBtn.Position = UDim2.new(0, 160, 0, 160)
-MinusBtn.Text = "-"
-MinusBtn.MouseButton1Click:Connect(function()
-    Config.FOV = math.clamp(Config.FOV - 10, 20, 400)
-    FOVLabel.Text = "FOV: " .. Config.FOV
-end)
-
-local PlusBtn = Instance.new("TextButton", Main)
-PlusBtn.Size = UDim2.new(0, 35, 0, 25)
-PlusBtn.Position = UDim2.new(0, 205, 0, 160)
-PlusBtn.Text = "+"
-PlusBtn.MouseButton1Click:Connect(function()
-    Config.FOV = math.clamp(Config.FOV + 10, 20, 400)
-    FOVLabel.Text = "FOV: " .. Config.FOV
-end)
+Toggle(40, "Auto Lock", function(v) Config.Aimbot = v end)
+Toggle(80, "ESP Highlight", function(v) Config.ESP = v RefreshESP() end)
+Toggle(120, "Show FOV", function(v) Config.ShowFOV = v end)
+Toggle(160, "Team Check", function(v) Config.TeamCheck = v RefreshESP() end)
+Toggle(200, "Wall Check", function(v) Config.WallCheck = v end)
